@@ -1,0 +1,49 @@
+# Home gym setup. The coach only suggests weights you can actually load.
+
+# Plates you own (shared across all equipment).
+plates = [
+  { kg = 2.5, count = 4 },
+  { kg = 2.0, count = 4 },
+  { kg = 1.5, count = 4 },
+]
+
+# stacks  = identical plate stacks loaded at the same time
+#           (dumbbell pair = 2 dumbbells x 2 sides = 4)
+# counted = stacks that count toward the weight you log in Hevy
+#           (Hevy logs dumbbell weight per dumbbell = 2 sides)
+# base_kg = handle/bar weight included in the logged weight
+
+[equipment.dumbbell_pair]
+label = "Dumbbells (pair)"
+stacks = 4
+counted = 2
+base_kg = 0.0 # handles are very light and not logged
+
+[equipment.dumbbell_single]
+label = "Dumbbell (one-arm)"
+stacks = 2
+counted = 2
+base_kg = 0.0
+
+[equipment.barbell]
+label = "Barbell"
+stacks = 2
+counted = 2
+base_kg = 0.5
+
+[equipment.lat_pulldown]
+label = "Lat pulldown (2 dumbbells as counterweight)"
+stacks = 2
+counted = 2
+base_kg = 0.0
+
+# Hevy exercise_template.equipment -> your equipment
+[hevy_equipment]
+dumbbell = "dumbbell_pair"
+barbell = "barbell"
+machine = "lat_pulldown"
+cable = "lat_pulldown"
+
+# Per-exercise override: exercise_template_id = equipment key
+# e.g. one-arm rows can use more plates on a single dumbbell
+[exercise_overrides]

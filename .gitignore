@@ -1,0 +1,6 @@
+.env
+data/
+.taste-skill/
+backend/target/
+frontend/node_modules/
+frontend/dist/
