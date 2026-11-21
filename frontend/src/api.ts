@@ -313,36 +313,144 @@ export type WrappedSummary = {
   biggest_pr: string | null
 }
 
+import {
+  buildCsvExport,
+  computeBody,
+  computeCoach,
+  computeEquipment,
+  computeExerciseDetail,
+  computeExercises,
+  computeMuscles,
+  computeOverview,
+  computeReports,
+  computeWorkoutDetail,
+  computeWorkouts,
+} from './engine/analytics'
+import { normalizeConfig } from './engine/plates'
+import { logBodyViaProxy, pushRoutineViaProxy, syncViaProxy } from './engine/proxyClient'
+import { loadCache, saveCache } from './engine/storage'
+
 export type ReportsOverview = {
   wrapped: WrappedSummary
   milestones: Milestone[]
   markdown_digest: string
 }
 
-async function call<T>(path: string, init?: RequestInit): Promise<T> {
+async function callRust<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(`/api${path}`, init)
-  const body = await res.json()
-  if (!res.ok) throw new Error(body.error ?? res.statusText)
-  return body
+  const text = await res.text()
+  let body: unknown = null
+  try {
+    body = text ? JSON.parse(text) : null
+  } catch {
+    throw new Error(text.slice(0, 140) || res.statusText)
+  }
+  if (!res.ok) {
+    const msg =
+      body && typeof body === 'object' && 'error' in body
+        ? String((body as { error: unknown }).error)
+        : res.statusText
+    throw new Error(msg)
+  }
+  return body as T
+}
+
+let modePromise: Promise<'rust' | 'vercel'> | null = null
+let initialSyncPromise: Promise<void> | null = null
+
+async function getMode(): Promise<'rust' | 'vercel'> {
+  if (!modePromise) {
+    modePromise = (async () => {
+      try {
+        const res = await fetch('/api/status')
+        const ct = res.headers.get('content-type') || ''
+        if (res.ok && ct.includes('application/json')) {
+          await res.json()
+          return 'rust'
+        }
+      } catch {
+        // Fall through to Vercel serverless proxy + browser cache
+      }
+      return 'vercel'
+    })()
+  }
+  return modePromise
+}
+
+async function cachedState() {
+  const state = await loadCache()
+  if (!state.last_sync) {
+    if (!initialSyncPromise) {
+      initialSyncPromise = syncViaProxy(true).then(() => undefined)
+    }
+    await initialSyncPromise
+    return loadCache()
+  }
+  return state
+}
+
+function triggerDownload(filename: string, content: string, mime: string) {
+  const blob = new Blob([content], { type: mime })
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = filename
+  a.click()
+  URL.revokeObjectURL(url)
 }
 
 export const api = {
-  status: () => call<Status>('/status'),
-  overview: (weeks = 6) => call<Overview>(`/overview?weeks=${weeks}`),
-  workouts: () => call<WorkoutSummary[]>('/workouts'),
-  workoutDetail: (id: string) => call<WorkoutDetail>(`/workouts/${encodeURIComponent(id)}`),
-  exercises: () => call<ExercisesOverview>('/exercises'),
-  exerciseDetail: (id: string) => call<ExerciseDetail>(`/exercises/${encodeURIComponent(id)}`),
-  muscles: (days = 7) => call<MusclesReport>(`/muscles?days=${days}`),
-  body: () => call<BodyOverview>('/body'),
-  logBody: (payload: LogMeasurementPayload) =>
-    call<BodyOverview>('/body', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload),
-    }),
-  coach: () => call<CoachOverview>('/coach'),
-  pushRoutine: (
+  status: async (): Promise<Status> => {
+    if ((await getMode()) === 'rust') return callRust<Status>('/status')
+    const s = await cachedState()
+    return { user: s.user, last_sync: s.last_sync, workouts: s.workouts.length }
+  },
+  overview: async (weeks = 6): Promise<Overview> => {
+    if ((await getMode()) === 'rust') return callRust<Overview>(`/overview?weeks=${weeks}`)
+    return computeOverview(await cachedState(), weeks)
+  },
+  workouts: async (): Promise<WorkoutSummary[]> => {
+    if ((await getMode()) === 'rust') return callRust<WorkoutSummary[]>('/workouts')
+    return computeWorkouts(await cachedState())
+  },
+  workoutDetail: async (id: string): Promise<WorkoutDetail> => {
+    if ((await getMode()) === 'rust')
+      return callRust<WorkoutDetail>(`/workouts/${encodeURIComponent(id)}`)
+    return computeWorkoutDetail(await cachedState(), id)
+  },
+  exercises: async (): Promise<ExercisesOverview> => {
+    if ((await getMode()) === 'rust') return callRust<ExercisesOverview>('/exercises')
+    return computeExercises(await cachedState())
+  },
+  exerciseDetail: async (id: string): Promise<ExerciseDetail> => {
+    if ((await getMode()) === 'rust')
+      return callRust<ExerciseDetail>(`/exercises/${encodeURIComponent(id)}`)
+    return computeExerciseDetail(await cachedState(), id)
+  },
+  muscles: async (days = 7): Promise<MusclesReport> => {
+    if ((await getMode()) === 'rust') return callRust<MusclesReport>(`/muscles?days=${days}`)
+    return computeMuscles(await cachedState(), days)
+  },
+  body: async (): Promise<BodyOverview> => {
+    if ((await getMode()) === 'rust') return callRust<BodyOverview>('/body')
+    return computeBody(await cachedState())
+  },
+  logBody: async (payload: LogMeasurementPayload): Promise<BodyOverview> => {
+    if ((await getMode()) === 'rust') {
+      return callRust<BodyOverview>('/body', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      })
+    }
+    const next = await logBodyViaProxy(payload)
+    return computeBody(next)
+  },
+  coach: async (): Promise<CoachOverview> => {
+    if ((await getMode()) === 'rust') return callRust<CoachOverview>('/coach')
+    return computeCoach(await cachedState())
+  },
+  pushRoutine: async (
     split: string,
     payload: {
       routine_title: string
@@ -356,22 +464,70 @@ export const api = {
         notes: string
       }[]
     },
-  ) =>
-    call<PushRoutineResult>(`/coach/${encodeURIComponent(split)}/push`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload),
-    }),
-  reports: (period: '30d' | 'all' = 'all') => call<ReportsOverview>(`/reports?period=${period}`),
-  equipment: () => call<EquipmentConfig>('/equipment'),
-  saveEquipment: (payload: {
+  ): Promise<PushRoutineResult> => {
+    if ((await getMode()) === 'rust') {
+      return callRust<PushRoutineResult>(`/coach/${encodeURIComponent(split)}/push`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      })
+    }
+    return pushRoutineViaProxy(split, payload)
+  },
+  reports: async (period: '30d' | 'all' = 'all'): Promise<ReportsOverview> => {
+    if ((await getMode()) === 'rust') return callRust<ReportsOverview>(`/reports?period=${period}`)
+    return computeReports(await cachedState(), period)
+  },
+  equipment: async (): Promise<EquipmentConfig> => {
+    if ((await getMode()) === 'rust') return callRust<EquipmentConfig>('/equipment')
+    return computeEquipment(await cachedState())
+  },
+  saveEquipment: async (payload: {
     plates: PlateItem[]
     equipment?: Record<string, Omit<EquipmentEntry, 'loads'>>
-  }) =>
-    call<EquipmentConfig>('/equipment', {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload),
-    }),
-  sync: (full = false) => call<unknown>(`/sync${full ? '?full=true' : ''}`, { method: 'POST' }),
+  }): Promise<EquipmentConfig> => {
+    if ((await getMode()) === 'rust') {
+      return callRust<EquipmentConfig>('/equipment', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      })
+    }
+    const state = await loadCache()
+    const nextCfg = normalizeConfig(state.equipment, payload.plates, payload.equipment)
+    const nextState = { ...state, equipment: nextCfg }
+    await saveCache(nextState)
+    return computeEquipment(nextState)
+  },
+  sync: async (full = false): Promise<unknown> => {
+    if ((await getMode()) === 'rust') {
+      return callRust<unknown>(`/sync${full ? '?full=true' : ''}`, { method: 'POST' })
+    }
+    return syncViaProxy(full)
+  },
+  downloadExport: async (kind: 'csv' | 'json') => {
+    if ((await getMode()) === 'rust') {
+      window.location.href = `/api/export/${kind}`
+      return
+    }
+    const state = await cachedState()
+    if (kind === 'csv') {
+      triggerDownload('hevy-sets-export.csv', buildCsvExport(state), 'text/csv;charset=utf-8')
+    } else {
+      triggerDownload(
+        'hevy-backup.json',
+        JSON.stringify(
+          {
+            exported_at: new Date().toISOString(),
+            user: state.user,
+            workouts: state.workouts,
+            body_measurements: state.measurements,
+          },
+          null,
+          2,
+        ),
+        'application/json;charset=utf-8',
+      )
+    }
+  },
 }

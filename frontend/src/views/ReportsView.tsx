@@ -55,22 +55,12 @@ export function ReportsView() {
         </div>
 
         <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-          <a
-            href="/api/export/csv"
-            download="hevy-sets-export.csv"
-            className="btn-ghost"
-            style={{ display: 'inline-flex', alignItems: 'center', textDecoration: 'none' }}
-          >
+          <button className="btn-ghost" onClick={() => api.downloadExport('csv')}>
             Export CSV
-          </a>
-          <a
-            href="/api/export/json"
-            download="hevy-backup.json"
-            className="btn-ghost"
-            style={{ display: 'inline-flex', alignItems: 'center', textDecoration: 'none' }}
-          >
+          </button>
+          <button className="btn-ghost" onClick={() => api.downloadExport('json')}>
             Export JSON
-          </a>
+          </button>
         </div>
       </div>
 

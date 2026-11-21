@@ -16,6 +16,15 @@ cd backend; cargo run
 cd frontend; npm install; npm run dev
 ```
 
+## Deploy on Vercel (Zero-Backend Mode)
+
+The repo also includes a Vercel Serverless proxy (`api/hevy.mjs` and `frontend/api/hevy.mjs`)
+plus a full client-side analytics & IndexedDB cache engine.
+
+1. Import the repo on Vercel (either Root Directory `.` or `frontend`).
+2. Add Environment Variable `HEVY_API_KEY` in Vercel Project Settings.
+3. Redeploy — the frontend detects the serverless proxy automatically and caches data in IndexedDB.
+
 Press **Sync** in the UI (or `POST /api/sync`) to pull data. First sync pulls everything;
 later syncs only fetch changes via `/v1/workouts/events?since=`. `?full=true` forces a full resync.
 
